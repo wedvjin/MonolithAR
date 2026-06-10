@@ -1,0 +1,21 @@
+{
+  "name": "monolithar",
+  "version": "1.0.0",
+  "description": "MonolithAR — Clash of Monoliths. A real-time multiplayer WebXR AR game.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}

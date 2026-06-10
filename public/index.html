@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05060c" />
+  <title>MonolithAR — Clash of Monoliths</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <!-- ===================== HOME / LOBBY SCREEN ===================== -->
+  <div id="home" class="screen">
+    <div class="home-card">
+      <h1 class="logo">MONOLITH<span>AR</span></h1>
+      <p class="tagline">Clash of Monoliths — a multiplayer arena in your room</p>
+
+      <label for="name-input">CALLSIGN</label>
+      <input id="name-input" maxlength="16" placeholder="Wanderer" autocomplete="off" />
+
+      <label for="room-input">ROOM CODE <small>(blank = new room)</small></label>
+      <input id="room-input" maxlength="6" placeholder="e.g. K7QX" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" />
+
+      <div class="mode-buttons">
+        <button id="btn-ar" class="btn btn-primary" disabled>
+          <span class="btn-title">ENTER IN AR</span>
+          <span class="btn-sub" id="ar-support-note">checking device…</span>
+        </button>
+        <button id="btn-flat" class="btn">
+          <span class="btn-title">ENTER IN 3D</span>
+          <span class="btn-sub">desktop / any phone</span>
+        </button>
+      </div>
+
+      <div id="home-error" class="home-error hidden"></div>
+
+      <details class="howto">
+        <summary>How to play</summary>
+        <ul>
+          <li><b>Anchor</b> the arena on your floor (AR) — everyone shares the same battlefield, each in their own room.</li>
+          <li><b>Walk</b> into the glowing wisps to harvest energy.</li>
+          <li><b>Tap / click</b> to fire plasma bolts at rival monoliths (10⚡ per shot).</li>
+          <li><b>Hold shield</b> to protect your monolith — it burns energy fast.</li>
+          <li>Shooting a rival <i>player</i> steals their energy.</li>
+          <li>Last monolith standing — or healthiest after 3 minutes — wins.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+
+  <!-- ===================== IN-GAME HUD (also the AR DOM overlay) ===================== -->
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div id="phase-banner"></div>
+      <div id="room-chip"></div>
+    </div>
+
+    <div id="scoreboard"></div>
+    <div id="killfeed"></div>
+
+    <div id="center-msg" class="hidden"></div>
+    <div id="reticle-2d" class="hidden"></div>
+    <div id="hit-vignette"></div>
+
+    <div id="hud-bottom">
+      <div id="bars">
+        <div class="bar-row">
+          <span class="bar-label">⚡</span>
+          <div class="bar"><div id="energy-fill" class="bar-fill energy"></div></div>
+          <span id="energy-num" class="bar-num">50</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">⬛</span>
+          <div class="bar"><div id="hp-fill" class="bar-fill hp"></div></div>
+          <span id="hp-num" class="bar-num">100</span>
+        </div>
+      </div>
+      <div id="touch-controls" class="hidden">
+        <button id="btn-shield" class="action-btn">🛡</button>
+        <button id="btn-fire" class="action-btn fire">⦿</button>
+      </div>
+      <div id="key-hints" class="hidden">
+        <b>WASD</b> move · <b>mouse</b> look · <b>click</b> fire · <b>hold&nbsp;F</b> shield · <b>Esc</b> release cursor
+      </div>
+    </div>
+
+    <button id="btn-leave">✕ LEAVE</button>
+  </div>
+
+  <!-- ===================== MATCH END OVERLAY ===================== -->
+  <div id="endscreen" class="screen hidden">
+    <div class="home-card">
+      <h2 id="end-title">VICTORY</h2>
+      <div id="end-detail"></div>
+      <p class="tagline">next match starting soon…</p>
+    </div>
+  </div>
+
+  <div id="joystick" class="hidden">
+    <div id="joystick-knob"></div>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
