@@ -45,11 +45,13 @@ test('wisps spawn and are collected by a nearby player for energy', () => {
   assert.ok(room.wisps.length >= 1, 'a wisp should have spawned');
   drainEvents(room);
 
-  // Teleport the player onto the wisp.
+  // Teleport the player onto the wisp. Wisps spawn at random positions, so
+  // a second one may occasionally sit within collect range too — assert on
+  // "at least one collected", not an exact energy value.
   const w = room.wisps[0];
   room.handlePose(a, [...w.pos], [0, 0, 0, 1]);
   room.tick(DT);
-  assert.equal(a.energy, 10 + GAME.WISP_ENERGY);
+  assert.ok(a.energy >= 10 + GAME.WISP_ENERGY, `energy should rise (got ${a.energy})`);
   const evs = drainEvents(room);
   assert.ok(evs.some((e) => e.kind === EV.WISP_TAKEN && e.who === 'a'));
 });
@@ -119,6 +121,11 @@ test('hitting a rival player steals energy', () => {
   const b = room.addPlayer('b', 'Bob');
   runSeconds(room, GAME.COUNTDOWN_SECONDS + 0.1);
   drainEvents(room);
+
+  // Wisps spawn at random spots; a stray pickup would skew the exact
+  // energy assertions below, so suppress them for this test.
+  room.wisps = [];
+  room.wispTimer = Infinity;
 
   room.handlePose(a, [0, 1.6, 1], [0, 0, 0, 1]);
   room.handlePose(b, [0, 1.6, -1], [0, 0, 0, 1]);

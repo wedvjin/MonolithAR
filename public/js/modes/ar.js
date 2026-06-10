@@ -16,21 +16,31 @@ export const arSupported = async () => {
 };
 
 /**
- * Handheld WebXR AR mode: hit-test driven arena placement, then tap-to-shoot.
+ * WebXR AR mode for both handheld (phone) and headset (Meta Quest) devices.
+ *
+ * Input is unified through three.js XR controllers: on phones a screen tap
+ * surfaces as a transient controller with targetRayMode 'screen'; on Quest
+ * each Touch controller (or tracked hand) is a 'tracked-pointer'.
+ *   - trigger / tap  → place arena, then shoot
+ *   - grip squeeze   → hold shield (headset; phones use the HUD button)
+ * Tracked pointers aim along the controller ray and get a laser pointer +
+ * haptic feedback; screen taps shoot along the camera ray (the crosshair).
  */
 export class ArMode {
-  constructor(world, hudRoot, { onShoot, onPlaced, onEnd }) {
+  constructor(world, hudRoot, { onShoot, onShield, onPlaced, onEnd }) {
     this.world = world;
     this.hudRoot = hudRoot;
     this.onShoot = onShoot;
+    this.onShield = onShield;
     this.onPlaced = onPlaced;
     this.onEnd = onEnd;
     this.session = null;
-    this.hitTestSource = null;
+    this.viewerHitTestSource = null;
     this.localSpace = null;
-    this.viewerSpace = null;
     this.placed = false;
     this.mySlot = 0;
+    this.controllers = [];
+    this.hasTrackedPointer = false;
   }
 
   async start(mySlot) {
@@ -46,25 +56,132 @@ export class ArMode {
     this.world.renderer.xr.setReferenceSpaceType('local-floor');
     await this.world.renderer.xr.setSession(session);
 
-    this.viewerSpace = await session.requestReferenceSpace('viewer');
+    const viewerSpace = await session.requestReferenceSpace('viewer');
     this.localSpace = await session.requestReferenceSpace('local-floor');
-    this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
+    this.viewerHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
-    session.addEventListener('select', this.handleSelect);
+    this.setupControllers();
+
     session.addEventListener('end', () => {
-      this.hitTestSource = null;
+      this.teardownControllers();
+      this.viewerHitTestSource = null;
       this.session = null;
       this.onEnd?.();
     });
   }
 
-  handleSelect = () => {
+  /** True when the HUD DOM overlay is actually being composited (phones).
+   *  Quest Browser has no dom-overlay, so headsets need the in-world HUD. */
+  get domOverlayActive() {
+    return Boolean(this.session?.domOverlayState?.type);
+  }
+
+  setupControllers() {
+    for (const i of [0, 1]) {
+      const c = this.world.renderer.xr.getController(i);
+      c.userData.rayMode = null;
+      c.userData.source = null;
+      c.userData.hitTestSource = null;
+
+      c.userData.onConnected = (e) => {
+        c.userData.rayMode = e.data.targetRayMode;
+        c.userData.source = e.data;
+        if (e.data.targetRayMode === 'tracked-pointer') {
+          this.hasTrackedPointer = true;
+          this.attachLaser(c);
+          // Aim arena placement with the controller ray.
+          this.session?.requestHitTestSource({ space: e.data.targetRaySpace })
+            .then((src) => { c.userData.hitTestSource = src; })
+            .catch(() => {});
+        }
+      };
+      c.userData.onDisconnected = () => {
+        c.userData.rayMode = null;
+        c.userData.source = null;
+        c.userData.hitTestSource?.cancel?.();
+        c.userData.hitTestSource = null;
+        this.removeLaser(c);
+      };
+      c.userData.onSelect = () => this.handleSelectFrom(c);
+      c.userData.onSqueezeStart = () => this.onShield?.(true);
+      c.userData.onSqueezeEnd = () => this.onShield?.(false);
+
+      c.addEventListener('connected', c.userData.onConnected);
+      c.addEventListener('disconnected', c.userData.onDisconnected);
+      c.addEventListener('select', c.userData.onSelect);
+      c.addEventListener('squeezestart', c.userData.onSqueezeStart);
+      c.addEventListener('squeezeend', c.userData.onSqueezeEnd);
+
+      this.world.scene.add(c);
+      this.controllers.push(c);
+    }
+  }
+
+  teardownControllers() {
+    for (const c of this.controllers) {
+      c.removeEventListener('connected', c.userData.onConnected);
+      c.removeEventListener('disconnected', c.userData.onDisconnected);
+      c.removeEventListener('select', c.userData.onSelect);
+      c.removeEventListener('squeezestart', c.userData.onSqueezeStart);
+      c.removeEventListener('squeezeend', c.userData.onSqueezeEnd);
+      c.userData.hitTestSource?.cancel?.();
+      c.userData.hitTestSource = null;
+      this.removeLaser(c);
+      this.world.scene.remove(c);
+    }
+    this.controllers = [];
+    this.hasTrackedPointer = false;
+  }
+
+  attachLaser(controller) {
+    if (controller.userData.laser) return;
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -3),
+    ]);
+    const laser = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.6 })
+    );
+    const tip = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xc084fc })
+    );
+    tip.position.z = -3;
+    laser.add(tip);
+    controller.add(laser);
+    controller.userData.laser = laser;
+  }
+
+  removeLaser(controller) {
+    const laser = controller.userData.laser;
+    if (!laser) return;
+    controller.remove(laser);
+    laser.geometry.dispose();
+    laser.material.dispose();
+    controller.userData.laser = null;
+  }
+
+  pulse(controller, intensity = 0.5, ms = 40) {
+    controller.userData.source?.gamepad?.hapticActuators?.[0]?.pulse?.(intensity, ms);
+  }
+
+  handleSelectFrom(controller) {
     if (!this.placed) {
-      if (this.world.reticle.visible) this.placeArena();
+      if (this.world.reticle.visible) {
+        this.placeArena();
+        this.pulse(controller, 0.8, 80);
+      }
       return;
     }
-    this.onShoot?.();
-  };
+    if (controller.userData.rayMode === 'tracked-pointer') {
+      this.onShoot?.(this.world.getArenaLocalRayFrom(controller));
+      this.pulse(controller);
+    } else {
+      // Screen tap / gaze: shoot where the player is looking.
+      this.onShoot?.();
+    }
+  }
 
   placeArena() {
     const arena = this.world.arena;
@@ -92,15 +209,23 @@ export class ArMode {
 
   /** Call once per rendered frame with the XRFrame. */
   onFrame(frame) {
-    if (this.placed || !frame || !this.hitTestSource) return;
-    const hits = frame.getHitTestResults(this.hitTestSource);
-    if (hits.length > 0) {
+    if (this.placed || !frame) return;
+
+    // Prefer controller-ray hits (point at the floor) over head-gaze hits.
+    const sources = [];
+    for (const c of this.controllers) {
+      if (c.userData.hitTestSource) sources.push(c.userData.hitTestSource);
+    }
+    if (this.viewerHitTestSource) sources.push(this.viewerHitTestSource);
+
+    for (const src of sources) {
+      const hits = frame.getHitTestResults(src);
+      if (hits.length === 0) continue;
       const pose = hits[0].getPose(this.localSpace);
-      if (pose) {
-        this.world.reticle.visible = true;
-        this.world.reticle.matrix.fromArray(pose.transform.matrix);
-        return;
-      }
+      if (!pose) continue;
+      this.world.reticle.visible = true;
+      this.world.reticle.matrix.fromArray(pose.transform.matrix);
+      return;
     }
     this.world.reticle.visible = false;
   }

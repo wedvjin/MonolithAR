@@ -2,6 +2,7 @@ import { GAME, EV, PHASE } from '/shared/constants.js';
 import { Net } from './net.js';
 import { World } from './world.js';
 import { Hud } from './hud.js';
+import { XrHud } from './xrhud.js';
 import { sfx } from './audio.js';
 import { ArMode, arSupported } from './modes/ar.js';
 import { FlatMode } from './modes/flat.js';
@@ -10,6 +11,7 @@ const $ = (id) => document.getElementById(id);
 
 const world = new World($('gl'));
 const hud = new Hud();
+const xrHud = new XrHud(world.camera); // headset AR fallback (no dom-overlay)
 const net = new Net();
 
 const app = {
@@ -22,6 +24,7 @@ const app = {
   poseAccum: 0,
   lastFrameTime: 0,
   lastPhase: null,
+  arUiBound: false,
   me: { energy: GAME.ENERGY_START, hp: GAME.MONOLITH_HP },
 };
 
@@ -131,13 +134,23 @@ function bindNetHandlers() {
 
 async function startAr() {
   const fireBtn = $('btn-fire');
-  fireBtn.classList.add('hidden'); // in AR you tap the world itself
+  fireBtn.classList.add('hidden'); // in AR you tap / pull the trigger
   hud.configureFor('ar-placing');
-  hud.centerMessage('SCAN YOUR FLOOR\nTAP TO ANCHOR THE ARENA', 0);
+  hud.centerMessage('SCAN YOUR FLOOR\nTAP OR PULL TRIGGER TO ANCHOR', 0);
 
-  // Keep taps on HUD widgets from doubling as shoot gestures.
-  for (const id of ['btn-shield', 'btn-leave', 'hud-bottom', 'scoreboard']) {
-    $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
+  if (!app.arUiBound) {
+    app.arUiBound = true;
+    // Keep taps on HUD widgets from doubling as shoot gestures.
+    for (const id of ['btn-shield', 'btn-leave', 'hud-bottom', 'scoreboard']) {
+      $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
+    }
+    // Shield button works via plain touch events in handheld AR too.
+    const shieldBtn = $('btn-shield');
+    const shieldOn = (e) => { e.preventDefault(); net.shield(true); shieldBtn.classList.add('held'); };
+    const shieldOff = () => { net.shield(false); shieldBtn.classList.remove('held'); };
+    shieldBtn.addEventListener('touchstart', shieldOn, { passive: false });
+    shieldBtn.addEventListener('touchend', shieldOff);
+    shieldBtn.addEventListener('touchcancel', shieldOff);
   }
 
   const ar = new ArMode(world, $('hud'), {
@@ -146,19 +159,14 @@ async function startAr() {
       hud.clearCenterMessage();
       hud.configureFor('ar');
       hud.centerMessage('ARENA ANCHORED', 1400);
+      xrHud.clearCenterMessage();
+      xrHud.centerMessage('ARENA ANCHORED', 1400);
       app.posing = true;
     },
-    onShoot: () => shoot(),
+    onShoot: (ray) => shoot(ray),
+    onShield: (on) => net.shield(on),
     onEnd: () => leaveGame(),
   });
-
-  // Shield button works via plain touch events in AR too.
-  const shieldBtn = $('btn-shield');
-  const shieldOn = (e) => { e.preventDefault(); net.shield(true); shieldBtn.classList.add('held'); };
-  const shieldOff = () => { net.shield(false); shieldBtn.classList.remove('held'); };
-  shieldBtn.addEventListener('touchstart', shieldOn, { passive: false });
-  shieldBtn.addEventListener('touchend', shieldOff);
-  shieldBtn.addEventListener('touchcancel', shieldOff);
 
   app.mode = ar;
   app.playing = true;
@@ -169,6 +177,12 @@ async function startAr() {
     leaveGame();
     showHomeError(`Could not start AR: ${err.message}`);
     return;
+  }
+  // Headsets (Meta Quest) don't composite the DOM overlay — use the
+  // in-world HUD there instead.
+  if (!ar.domOverlayActive) {
+    xrHud.enable();
+    xrHud.centerMessage('POINT AT YOUR FLOOR\nPULL TRIGGER TO ANCHOR THE ARENA\n(GRIP = SHIELD)', 0);
   }
   world.renderer.setAnimationLoop(tick);
 }
@@ -200,6 +214,7 @@ function leaveGame() {
   world.reset();
   hud.hide();
   hud.clearCenterMessage();
+  xrHud.disable();
   homeEl.classList.remove('hidden');
   app.lastPhase = null;
 }
@@ -208,15 +223,20 @@ function leaveGame() {
 // Gameplay
 // ---------------------------------------------------------------------------
 
-function shoot() {
+/** @param ray optional {o, d} in arena space (e.g. from a Quest controller);
+ *  defaults to the camera's forward ray. */
+function shoot(ray) {
   if (!app.playing || !app.posing) return;
   if (app.me.energy < GAME.SHOT_COST) {
     hud.centerMessage('NOT ENOUGH ENERGY — HARVEST WISPS', 1100);
+    xrHud.centerMessage('NOT ENOUGH ⚡ — HARVEST WISPS', 1100);
     sfx.drained();
     return;
   }
-  const xrCam = app.modeName === 'ar' ? app.mode.getCamera() : null;
-  const ray = world.getArenaLocalRay(xrCam);
+  if (!ray) {
+    const xrCam = app.modeName === 'ar' ? app.mode.getCamera() : null;
+    ray = world.getArenaLocalRay(xrCam);
+  }
   net.shoot(ray.o, ray.d);
   sfx.shoot();
 }
@@ -230,7 +250,9 @@ function onSnapshot(snap) {
     app.me.energy = mine.e;
     app.me.hp = mine.hp;
     hud.setBars(mine.e, GAME.ENERGY_MAX, mine.hp, GAME.MONOLITH_HP);
+    xrHud.setBars(mine.e, mine.hp);
   }
+  xrHud.setPhase(snap.phase, snap.tl);
   refreshScoreboard(snap);
 
   if (snap.phase !== PHASE.ENDED && app.lastPhase === PHASE.ENDED) hud.hideEnd();
@@ -299,7 +321,12 @@ function handleEvent(ev) {
       world.burst([ev.p[0], 0.8, ev.p[2]], 0xfb923c, 60, 2.6, 1.1, 0.05);
       sfx.explode();
       hud.feed(`☠ ${nameOf(ev.by)} shattered ${nameOf(ev.who)}'s monolith`);
-      if (ev.who === net.id) hud.centerMessage('YOUR MONOLITH HAS FALLEN', 2200);
+      if (ev.who === net.id) {
+        hud.centerMessage('YOUR MONOLITH HAS FALLEN', 2200);
+        xrHud.centerMessage('YOUR MONOLITH HAS FALLEN', 2200);
+      } else {
+        xrHud.centerMessage(`${nameOf(ev.who)}'S MONOLITH FELL`, 1800);
+      }
       break;
 
     case EV.TOTEM_DOWN:
@@ -311,12 +338,14 @@ function handleEvent(ev) {
     case EV.COUNTDOWN:
       sfx.countdown(ev.n);
       hud.centerMessage(String(ev.n), 900);
+      xrHud.centerMessage(String(ev.n), 900);
       break;
 
     case EV.MATCH_START:
       sfx.matchStart();
       hud.hideEnd();
       hud.centerMessage('DESTROY THE RIVAL MONOLITHS', 2000);
+      xrHud.centerMessage('DESTROY THE RIVAL MONOLITHS', 2000);
       break;
 
     case EV.MATCH_END: {
@@ -325,6 +354,8 @@ function handleEvent(ev) {
         ? [`${ev.names.join(' & ')} ${ev.winners.length > 1 ? 'share the' : 'takes the'} crown`]
         : ['All monoliths fell. The void wins.'];
       hud.showEnd(ev.winners.length === 0 ? null : iWon, lines);
+      const title = ev.winners.length === 0 ? 'DRAW' : iWon ? '☼ VICTORY ☼' : 'DEFEAT';
+      xrHud.centerMessage(`${title}\n${lines[0]}`, GAME.ENDED_SECONDS * 1000);
       if (iWon) sfx.victory(); else sfx.defeat();
       break;
     }

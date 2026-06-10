@@ -81,6 +81,9 @@ export class World {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.02, 60);
     this.camera.position.set(0, GAME.PLAYER_EYE_HEIGHT, GAME.ARENA_RADIUS * 1.1);
+    // The camera is part of the scene graph so camera-attached UI (the
+    // headset HUD) renders in XR, where three syncs it to the device pose.
+    this.scene.add(this.camera);
 
     const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x202038, 1.2);
     this.scene.add(hemi);
@@ -652,6 +655,20 @@ export class World {
     const q = new THREE.Quaternion().fromArray(pose.q);
     const d = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     return { o: pose.p, d: [d.x, d.y, d.z] };
+  }
+
+  /** -Z ray of any scene object (e.g. an XR controller) in arena-local coordinates. */
+  getArenaLocalRayFrom(obj) {
+    obj.updateMatrixWorld();
+    this.arena.updateMatrixWorld();
+    const inv = new THREE.Matrix4().copy(this.arena.matrixWorld).invert();
+    const local = new THREE.Matrix4().multiplyMatrices(inv, obj.matrixWorld);
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    local.decompose(p, q, s);
+    const d = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    return { o: [p.x, p.y, p.z], d: [d.x, d.y, d.z] };
   }
 
   colorHexOf(index) {

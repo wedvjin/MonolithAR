@@ -33,7 +33,8 @@ required.
 
 | Mode | Devices | Controls |
 |------|---------|----------|
-| **AR** | Android Chrome, WebXR-capable headsets | Scan floor → tap to anchor → walk around, tap to shoot, hold 🛡 to shield |
+| **AR (handheld)** | Android Chrome | Scan floor → tap to anchor → walk around, tap to shoot, hold 🛡 to shield |
+| **AR (headset)** | Meta Quest 2/3/Pro (Quest Browser), other WebXR headsets | Point controller at floor → **trigger** to anchor → trigger to shoot along the laser, **grip** to shield |
 | **3D desktop** | Any browser | Click to capture mouse, `WASD` move, click/`Space` shoot, hold `F` shield |
 | **3D mobile** | Any phone (incl. iPhone) | Virtual joystick, drag to look, on-screen fire/shield buttons |
 
@@ -68,6 +69,21 @@ npx ngrok http 3000          # or cloudflared, localtunnel, tailscale serve…
 ```
 
 Desktop 3D mode works fine on plain `http://localhost:3000`.
+
+### Meta Quest notes
+
+Open the (HTTPS) game URL in the **Meta Quest Browser** and hit *Enter in AR* —
+the session runs in passthrough. Quest specifics are handled automatically:
+
+- Input arrives through XR controllers (or hand pinches), not screen taps:
+  the **trigger** anchors the arena and fires along the controller's laser
+  pointer, the **grip** holds the shield, with haptic feedback on each shot.
+- Quest Browser doesn't composite the DOM overlay into immersive sessions,
+  so the game detects this and switches to an **in-world HUD**: energy/HP
+  bars and the match timer ride at the bottom of your view, and match
+  messages appear at eye level.
+- Arena placement hit-tests along the controller ray (point at the floor)
+  with head-gaze as a fallback.
 
 ### Tests
 
